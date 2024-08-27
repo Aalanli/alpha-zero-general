@@ -10,6 +10,9 @@ from tqdm import tqdm
 
 from Arena import Arena
 from MCTS import MCTS
+from Game import Game
+from NeuralNet import NeuralNet
+from Args import Args
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +23,7 @@ class Coach():
     in Game and NeuralNet. args are specified in main.py.
     """
 
-    def __init__(self, game, nnet, args):
+    def __init__(self, game: Game, nnet: NeuralNet, args: Args):
         self.game = game
         self.nnet = nnet
         self.pnet = self.nnet.__class__(self.game)  # the competitor network

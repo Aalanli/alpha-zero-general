@@ -2,18 +2,22 @@ import logging
 import math
 
 import numpy as np
+import jax.numpy as jnp
+
+from Game import Game
+from NeuralNet import NeuralNet
+from Args import Args
 
 EPS = 1e-8
 
 log = logging.getLogger(__name__)
-
 
 class MCTS():
     """
     This class handles the MCTS tree.
     """
 
-    def __init__(self, game, nnet, args):
+    def __init__(self, game: Game, nnet: NeuralNet, args: Args):
         self.game = game
         self.nnet = nnet
         self.args = args
@@ -38,18 +42,17 @@ class MCTS():
             self.search(canonicalBoard)
 
         s = self.game.stringRepresentation(canonicalBoard)
-        counts = [self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())]
+        counts = np.array([self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())])
 
         if temp == 0:
             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
             bestA = np.random.choice(bestAs)
-            probs = [0] * len(counts)
+            probs = np.zeros(len(counts))
             probs[bestA] = 1
             return probs
 
-        counts = [x ** (1. / temp) for x in counts]
-        counts_sum = float(sum(counts))
-        probs = [x / counts_sum for x in counts]
+        counts = counts ** (1. / temp)
+        probs = counts / np.sum(counts)
         return probs
 
     def search(self, canonicalBoard):
