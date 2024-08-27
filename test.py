@@ -1,6 +1,7 @@
 # %%
 from dataclasses import dataclass
 import logging
+import os
 
 from tqdm import tqdm
 import jax
@@ -17,42 +18,53 @@ from connect_n import ConnectNGame
 
 from utils import AverageMeter
 
+@dataclass
+class ConnectNNetConfig:
+    batch_size: int = 64
+    epochs: int = 10
+    num_channels: int = 512
+    p_drop: float = 0.3
+    lr: float = 0.1
+    log_loss_iter = 5
+
 
 class ConnectNNet(eqx.Module):
     layers: list
     fc3: eqx.Module
     fc4: eqx.Module
 
-    def __init__(self, game: ConnectNGame):
-        config = game.net_config
-        keys = jax.random.split(config.key, 8)
-        flat_shape = config.num_channels * (game.config.board_n - 4) ** 2
+    def __init__(self, game: ConnectNGame, config: ConnectNNetConfig, key):
+        keys = jax.random.split(key, 8)
+        flat_shape = config.num_channels * (game.config.board_n) ** 2
         self.layers = nn.Sequential([
             nn.Conv2d(1, config.num_channels, 3, 1, 1, key=keys[0]),
             nn.BatchNorm(config.num_channels, axis_name="batch"),
             nn.Lambda(jax.nn.relu),
-            nn.Conv2d(config.num_channels, config.num_channels, 3, 1, 1, key=keys[1]),
-            nn.BatchNorm(config.num_channels, axis_name="batch"),
-            nn.Lambda(jax.nn.relu),
-            nn.Conv2d(config.num_channels, config.num_channels, 3, 1, key=keys[2]),
-            nn.BatchNorm(config.num_channels, axis_name="batch"),
-            nn.Lambda(jax.nn.relu),
-            nn.Conv2d(config.num_channels, config.num_channels, 3, 1, key=keys[3]),
-            nn.BatchNorm(config.num_channels, axis_name="batch"),
-            nn.Lambda(jax.nn.relu),
+            # nn.Conv2d(config.num_channels, config.num_channels, 3, 1, 1, key=keys[1]),
+            # nn.BatchNorm(config.num_channels, axis_name="batch"),
+            # nn.Lambda(jax.nn.relu),
+            # nn.Conv2d(config.num_channels, config.num_channels, 3, 1, 1, key=keys[2]),
+            # nn.BatchNorm(config.num_channels, axis_name="batch"),
+            # nn.Lambda(jax.nn.relu),
+            # nn.Conv2d(config.num_channels, config.num_channels, 3, 1, 1, key=keys[3]),
+            # nn.BatchNorm(config.num_channels, axis_name="batch"),
+            # nn.Lambda(jax.nn.relu),
             nn.Lambda(lambda x: x.reshape(-1)),
-            nn.Linear(flat_shape, 1024, key=keys[4]),
-            nn.BatchNorm(1024, axis_name="batch"),
-            nn.Lambda(jax.nn.relu),
-            nn.Dropout(p=config.p_drop),
-            nn.Linear(1024, 512, key=keys[4]),
-            nn.BatchNorm(512, axis_name="batch"),
-            nn.Lambda(jax.nn.relu),
-            nn.Dropout(p=config.p_drop),
+            # nn.Linear(flat_shape, 1024, key=keys[4]),
+            # nn.BatchNorm(1024, axis_name="batch"),
+            # nn.Lambda(jax.nn.relu),
+            # nn.Dropout(p=config.p_drop),
+            # nn.Linear(1024, 512, key=keys[4]),
+            # nn.BatchNorm(512, axis_name="batch"),
+            # nn.Lambda(jax.nn.relu),
+            # nn.Dropout(p=config.p_drop),
         ])
 
-        self.fc3 = nn.Linear(512, game.getActionSize(), key=keys[6])
-        self.fc4 = nn.Linear(512, 1, key=keys[7])
+        # self.fc3 = nn.Linear(512, game.getActionSize(), key=keys[6])
+        # self.fc4 = nn.Linear(512, 1, key=keys[7])
+
+        self.fc3 = nn.Linear(flat_shape, game.getActionSize(), key=keys[6])
+        self.fc4 = nn.Linear(flat_shape, 1, key=keys[7])
     
 
     def __call__(self, board: Array, state, key):
@@ -65,15 +77,19 @@ class ConnectNNet(eqx.Module):
     def run_batch(self, boards, state, key):
         return jax.vmap(self, axis_name="batch", in_axes=(0, None, None), out_axes=(0, 1, None))(boards[:, None], state, key)
 
+@eqx.filter_jit
+def net_pred(net, board: Array, state, key):
+    board = board[None, None]
+    pis_pred, vs_pred, _ = jax.vmap(net, axis_name="batch", in_axes=(0, None, None), out_axes=(0, 1, None))(board, state, key)
+    probs = jax.nn.softmax(pis_pred)
+    return probs[0], vs_pred[0]
 
 class ConnectNNetWrapper(NeuralNet):
-    fake_checkpoint: dict = {}
-
-    def __init__(self, game: ConnectNGame):
-        self.net, self.state = eqx.nn.make_with_state(ConnectNNet)(game)
+    def __init__(self, game: ConnectNGame, config: ConnectNNetConfig, key):
+        self.key, net_key = jax.random.split(key)
+        self.net, self.state = eqx.nn.make_with_state(ConnectNNet)(game, config, net_key)
         self.game = game
-        self.config = game.net_config
-        self.key = jax.random.split(self.config.key)[1]
+        self.config = config
 
     def train(self, examples: list):
         log = logging.getLogger('train')
@@ -116,55 +132,30 @@ class ConnectNNetWrapper(NeuralNet):
                 v_losses = AverageMeter()
         
     def predict(self, board: Array):
-        @eqx.filter_jit
-        def pred(net, board: Array, state, key):
-            board = board[None, None]
-            pis_pred, vs_pred, _ = jax.vmap(net, axis_name="batch", in_axes=(0, None, None), out_axes=(0, 1, None))(board, state, key)
-            probs = jax.nn.softmax(pis_pred)
-            return probs[0], vs_pred[0]
-
         net = self.net #eqx.nn.inference_mode(self.net)        
-        return pred(net, board, self.state, self.key)
+        return net_pred(net, board, self.state, self.key)
 
     def save_checkpoint(self, folder, filename):
-        pa = folder + filename
-        self.fake_checkpoint[pa] = (self.net, self.state, self.key)
+        eqx.tree_serialise_leaves(os.path.join(folder, filename), [self.net, self.state, self.key])
     
     def load_checkpoint(self, folder, filename):
-        pa = folder + filename
-        self.net, self.state, self.key = self.fake_checkpoint[pa]
+        self.net, self.state, self.key = eqx.tree_deserialise_leaves(os.path.join(folder, filename), [self.net, self.state, self.key])
 
-from utils import dotdict
 from Coach import Coach
-
+from Args import Args
 import coloredlogs
 coloredlogs.install(level='INFO')  # Change this to DEBUG to see more info.
 
-args = dotdict({
-    'numIters': 1000,
-    'numEps': 100,              # Number of complete self-play games to simulate during a new iteration.
-    'tempThreshold': 15,        #
-    'updateThreshold': 0.6,     # During arena playoff, new neural net will be accepted if threshold or more of games are won.
-    'maxlenOfQueue': 200000,    # Number of game examples to train the neural networks.
-    'numMCTSSims': 25,          # Number of games moves for MCTS to simulate.
-    'arenaCompare': 40,         # Number of games to play during arena play to determine if new net will be accepted.
-    'cpuct': 1,
-
-    'checkpoint': './temp/',
-    'load_model': False,
-    'load_folder_file': ('/dev/models/8x100x50','best.pth.tar'),
-    'numItersForTrainExamplesHistory': 20,
-
-})
-
+args = Args()
 
 game = ConnectNGame()
 # net, state = eqx.nn.make_with_state(ConnectNNet)(game)
 # key = jax.random.PRNGKey(13)
 # boards = game.getInitBoard()[None]
 # pi, v, state = net.run_batch(boards, state, key)
-
-wrap = ConnectNNetWrapper(game)
+net_config = ConnectNNetConfig()
+key = jax.random.PRNGKey(42)
+wrap = ConnectNNetWrapper(game, net_config, key)
 coach = Coach(game, wrap, args)
 coach.learn()
 

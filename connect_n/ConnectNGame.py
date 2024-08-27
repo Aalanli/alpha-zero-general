@@ -1,5 +1,6 @@
 # %%
 from dataclasses import dataclass
+import numpy as np
 import jax
 from jax import Array
 import jax.numpy as jnp
@@ -10,21 +11,10 @@ class ConnectNConfig:
     connect_n: int = 5
     board_n: int = 7
 
-@dataclass
-class ConnectNNetConfig:
-    batch_size: int = 64
-    epochs: int = 10
-    num_channels: int = 512
-    p_drop: float = 0.3
-    lr: float = 0.1
-    key: Array = jax.random.PRNGKey(42)
-    log_loss_iter = 5
-
 
 class ConnectNGame(Game):
-    def __init__(self, config: ConnectNConfig = ConnectNConfig(), net_config: ConnectNNetConfig = ConnectNNetConfig()):
+    def __init__(self, config: ConnectNConfig = ConnectNConfig()):
         self.config = config
-        self.net_config = net_config
         self.n = config.board_n
         self.cn = config.connect_n
         self.win_diag1 = jnp.eye(self.cn, self.cn, dtype=jnp.int8)
@@ -46,7 +36,7 @@ class ConnectNGame(Game):
         return (board, -player)
     
     def getValidMoves(self, board: Array, player: int):
-        return jnp.concat([(board == 0).flatten()]).astype(jnp.float32)
+        return np.array(jnp.concat([(board == 0).flatten()]))
     
     def getGameEnded(self, board: Array, player: int):
         fmin = jnp.array(0)
@@ -57,9 +47,10 @@ class ConnectNGame(Game):
             fmax = jnp.maximum(fmax, b1.max())
 
         cmp = player * self.cn
+        full = (board != 0).all()
         win = fmin == cmp | fmax == cmp
         loss = fmin == -cmp | fmax == -cmp
-        return jnp.where(win, 1, jnp.where(loss, -1, 0))
+        return jnp.where(win, 1, jnp.where(loss, -1, jnp.where(full, -1, 0)))
     
     def getCanonicalForm(self, board, player):
         return board * player
@@ -92,7 +83,7 @@ if __name__ == '__main__':
         [0, -1, 0, 0, 0],
         [0, 0, -1, 0, 0],
         [0, 0, 0, -1, 0],
-        [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, -1],
     ])
-    game.getGameEnded(board, 1)
+    print(game.getGameEnded(jnp.ones((5, 5), dtype=jnp.int8), 1))
 

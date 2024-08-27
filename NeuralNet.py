@@ -36,6 +36,9 @@ class NeuralNet():
         """
         pass
 
+    def copy(self):
+        pass
+
     def save_checkpoint(self, folder, filename):
         """
         Saves the current neural network (with its parameters) in

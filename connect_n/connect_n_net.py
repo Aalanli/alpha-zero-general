@@ -26,7 +26,7 @@ class ConnectNNet(eqx.Module):
 
     def __init__(self, game: ConnectNGame):
         config = game.net_config
-        keys = jax.random.split(config.key, 8)
+        keys = jax.random.split(config.seed, 8)
         flat_shape = config.num_channels * (game.config.board_n - 4) ** 2
         self.layers = nn.Sequential([
             nn.Conv2d(1, config.num_channels, 3, 1, 1, key=keys[0]),
@@ -71,7 +71,7 @@ class ConnectNNetWrapper(NeuralNet):
         self.net, self.state = eqx.nn.make_with_state(ConnectNNet)(game)
         self.game = game
         self.config = game.net_config
-        self.key = jax.random.split(self.config.key)[1]
+        self.key = jax.random.split(self.config.seed)[1]
 
     def train(self, examples: list):
         log = logging.getLogger('train')
